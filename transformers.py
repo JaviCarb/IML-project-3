@@ -8,9 +8,9 @@ from scipy.stats import skew, kurtosis
 ############################################
 
 class MissingHandler(BaseEstimator, TransformerMixin):
-    def __init__(self, method='drop'):
+    def __init__(self, method='impute'):
         """
-        method : 'drop', 'indicator', or 'impute'
+        method : 'indicator', or 'impute'
         """
         self.method = method
         # Sensor indexing
@@ -20,12 +20,13 @@ class MissingHandler(BaseEstimator, TransformerMixin):
 
     def fit(self, X, y=None):
         n_samples, n_sensors, n_timepoints = X.shape
-        missing_mask = np.all(np.isnan(X), axis=2)
+        # Identify fully missing sensors
+        fully_missing_mask = np.all(np.isnan(X), axis=2)
 
         if self.method in ['indicator', 'impute']:
             self.median_profiles_ = np.full((n_sensors, n_timepoints), np.nan)
             for s in range(n_sensors):
-                present_samples = ~missing_mask[:, s]
+                present_samples = ~fully_missing_mask[:, s]
                 if np.any(present_samples):
                     sensor_data = X[present_samples, s, :]
                     median_profile = np.nanmedian(sensor_data, axis=0)
@@ -33,26 +34,27 @@ class MissingHandler(BaseEstimator, TransformerMixin):
                     # If no present samples for a sensor
                     median_profile = np.zeros(n_timepoints)
                 self.median_profiles_[s, :] = median_profile
+        
         return self
 
     def transform(self, X):
         n_samples, n_sensors, n_timepoints = X.shape
-        missing_mask = np.all(np.isnan(X), axis=2)
+        # We'll consider any NaN as missing, whether partial or full.
+        any_nan_mask = np.isnan(X)  # shape: (n_samples, n_sensors, n_timepoints)
 
-        if self.method == 'drop':
-            keep_mask = ~np.any(missing_mask, axis=1)
-            return X[keep_mask, :, :]
-
-        elif self.method == 'indicator':
-            hands_missing = np.any(missing_mask[:, self.hands_indices], axis=1).astype(float)
-            chest_missing = np.any(missing_mask[:, self.chest_indices], axis=1).astype(float)
-            feet_missing = np.any(missing_mask[:, self.feet_indices], axis=1).astype(float)
+        if self.method == 'indicator':
+            # If any sensor in the hands/chest/feet group is missing at least one point,
+            # set the indicator to 1, else 0.
+            hands_missing = np.any(any_nan_mask[:, self.hands_indices, :], axis=(1,2)).astype(float)
+            chest_missing = np.any(any_nan_mask[:, self.chest_indices, :], axis=(1,2)).astype(float)
+            feet_missing = np.any(any_nan_mask[:, self.feet_indices, :], axis=(1,2)).astype(float)
 
             X_imputed = X.copy()
-            for i in range(n_samples):
-                for s in range(n_sensors):
-                    if missing_mask[i, s]:
-                        X_imputed[i, s, :] = self.median_profiles_[s, :]
+            # Impute NaNs with median profiles
+            for s in range(n_sensors):
+                sensor_median = self.median_profiles_[s, :]
+                # Replace NaNs in that sensor for all samples at once
+                X_imputed[:, s, :] = np.where(np.isnan(X_imputed[:, s, :]), sensor_median, X_imputed[:, s, :])
 
             # Add three new sensors for indicators
             hands_indicator_array = np.tile(hands_missing[:, np.newaxis, np.newaxis], (1, 1, n_timepoints))
@@ -64,15 +66,16 @@ class MissingHandler(BaseEstimator, TransformerMixin):
 
         elif self.method == 'impute':
             X_imputed = X.copy()
-            missing_mask = np.all(np.isnan(X), axis=2)
-            for i in range(n_samples):
-                for s in range(n_sensors):
-                    if missing_mask[i, s]:
-                        X_imputed[i, s, :] = self.median_profiles_[s, :]
+            # Impute NaNs with median profiles for each sensor
+            for s in range(n_sensors):
+                sensor_median = self.median_profiles_[s, :]
+                X_imputed[:, s, :] = np.where(np.isnan(X_imputed[:, s, :]), sensor_median, X_imputed[:, s, :])
             return X_imputed
 
         else:
+            # If no missing handling method, return X unchanged.
             return X
+
 
 
 
@@ -119,8 +122,11 @@ class FeatureExtractor(BaseEstimator, TransformerMixin):
         for i in range(n_samples):
             sample_feats = []
             for s in range(n_sensors):
-                for seg in range(n_segments):
+                for seg in range(n_segments):                    
                     segment_data = data[i, s, seg, :]
+                    #print if there is any nan value
+                    if np.isnan(segment_data).any():
+                        print("nan value detected")
                     mean_val = np.nanmean(segment_data)
                     median_val = np.nanmedian(segment_data)
                     std_val = np.nanstd(segment_data)

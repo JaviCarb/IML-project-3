@@ -67,12 +67,8 @@ path = "./given documents"  # Adjust to your data directory
 data, subject_ids, activity_labels = load_data(path, set_type='LS')
 
 # Identify samples with any missing sensor
-missing_mask = np.all(np.isnan(data), axis=2)  # shape (n_samples, n_sensors)
+missing_mask = np.any(np.isnan(data), axis=2)  # shape (n_samples, n_sensors)
 samples_to_drop = np.any(missing_mask, axis=1)
-
-# Check if any samples have any missing values
-missing_values_present = np.isnan(data).any()
-print(f"Missing values present: {missing_values_present}")
 
 # Drop these samples from data, subject_ids, and activity_labels
 X_clean = data[~samples_to_drop]
@@ -81,19 +77,21 @@ subjects_clean = subject_ids[~samples_to_drop]
 
 
 pipeline = Pipeline(steps=[
-    #('missing_handler', MissingHandler(method='indicator')),
+    ('missing_handler', MissingHandler(method='impute')),
     ('feature_extractor', FeatureExtractor(segment=True, n_segments=4, feature_level='extended')),
-    ('pca', 'passthrough'),
     ('scaler', ScalerTransformer(method='standard')),
+    ('pca', 'passthrough'),
     ('clf', DecisionTreeClassifier(max_depth=5))
 ], verbose=True, memory='./cache')
 
 param_grid = {
-    #'missing_handler__method': [],
-    'feature_extractor__segment': [False],
+    'missing_handler__method': ['indicator', 'impute'],
+    'feature_extractor__segment': [True, False],
+    'feature_extractor__n_segments': [4, 8],
     'feature_extractor__feature_level': ['basic', 'extended'],
-    'pca': ['passthrough'],
-    'scaler__method': ['robust']
+    'pca': [PCA(n_components=10), PCA(n_components=100), 'passthrough'],
+    'scaler__method': ['standard', 'robust'],
+    'clf__max_depth': [None]
 }
 
 gkf = GroupKFold(n_splits=5)
@@ -101,11 +99,47 @@ gkf = GroupKFold(n_splits=5)
 grid_search = GridSearchCV(
     pipeline,
     param_grid,
+    cv=gkf.split(data, activity_labels, groups=subject_ids),
+    scoring='accuracy',
+    n_jobs=-1,
+    verbose=1
+)
+grid_search.fit(data, activity_labels)
+
+#pca = grid_search.best_estimator_.named_steps['pca']
+#print("Explained variance ratio of the PCA:", pca.explained_variance_ratio_)
+
+print("\n\nFirst Search Done!")
+print("Best params:", grid_search.best_params_)
+print("Best CV score:", grid_search.best_score_)
+
+
+# With dropping missing values
+'''
+param_grid_2 = {
+    'missing_handler': ['passthrough'],
+    'feature_extractor__segment': [False],
+    'feature_extractor__n_segments': [4],
+    'feature_extractor__feature_level': ['extended'],
+    'pca': ['passthrough'],
+    'scaler__method': ['robust'],
+    'clf__max_depth': [None]
+}
+
+grid_search = GridSearchCV(
+    pipeline,
+    param_grid_2,
     cv=gkf.split(X_clean, y_clean, groups=subjects_clean),
     scoring='accuracy',
-    n_jobs=-1
+    n_jobs=-1,
+    verbose=1
 )
 grid_search.fit(X_clean, y_clean)
 
+#pca = grid_search.best_estimator_.named_steps['pca']
+#print("Explained variance ratio of the PCA:", pca.explained_variance_ratio_)
+
+print("\n\nSecond Search Done!")
 print("Best params:", grid_search.best_params_)
 print("Best CV score:", grid_search.best_score_)
+'''
