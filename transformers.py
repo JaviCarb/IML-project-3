@@ -8,11 +8,12 @@ from scipy.stats import skew, kurtosis
 ############################################
 
 class MissingHandler(BaseEstimator, TransformerMixin):
-    def __init__(self, method='impute'):
+    def __init__(self, method='impute', impute='median'):
         """
         method : 'indicator', or 'impute'
         """
         self.method = method
+        self.impute = impute
         # Sensor indexing
         self.hands_indices = np.arange(1, 11)   # sensors 3–12
         self.chest_indices = np.arange(11, 21)  # sensors 13–22
@@ -29,7 +30,10 @@ class MissingHandler(BaseEstimator, TransformerMixin):
                 present_samples = ~fully_missing_mask[:, s]
                 if np.any(present_samples):
                     sensor_data = X[present_samples, s, :]
-                    median_profile = np.nanmedian(sensor_data, axis=0)
+                    if self.impute == 'median':
+                        median_profile = np.nanmedian(sensor_data, axis=0)
+                    elif self.impute == 'mean':
+                        median_profile = np.nanmean(sensor_data, axis=0)
                 else:
                     # If no present samples for a sensor
                     median_profile = np.zeros(n_timepoints)
